@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vẽ Miền Nghiệm BPT (Mọi bậc)</title>
+    <style>
+        body { font-family: sans-serif; display: flex; gap: 20px; padding: 20px; background-color: #f0f2f5; }
+        
+        .panel-left {
+            width: 320px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            height: fit-content;
+        }
+
+        .panel-right {
+            flex-grow: 1;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: auto;
+        }
+
+        h2 { margin-top: 0; color: #2c3e50; font-size: 1.2rem; }
+        
+        .input-row { display: flex; gap: 5px; align-items: center; margin-bottom: 10px; }
+        input, select { padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 100%; }
+        
+        button.btn-add {
+            background-color: #007bff; color: white; border: none; padding: 10px;
+            width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+        button.btn-add:hover { background-color: #0056b3; }
+
+        .list-bpt { margin-top: 20px; max-height: 400px; overflow-y: auto; }
+        .bpt-item {
+            display: flex; justify-content: space-between; align-items: center;
+            border-left: 4px solid var(--bpt-color, #007bff); 
+            background: #f8f9fa; 
+            padding: 8px; margin-bottom: 5px; font-size: 0.9rem;
+        }
+        .btn-del { background: #dc3545; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; }
+        
+        canvas { border: 1px solid #ccc; cursor: crosshair; }
+        .legend { font-size: 0.85rem; color: #666; margin-top: 5px; text-align: center; }
+        .legend-solution { font-weight: bold; color: green; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="panel-left">
+        <h2>Nhập Bất Phương Trình (Mọi bậc)</h2>
+        <div class="input-row">
+            <input type="text" id="expression" placeholder="Ví dụ: y <= x*x + 1 hoặc x + y >= 2">
+        </div>
+        <button class="btn-add" onclick="themBPT()">+ Thêm BPT</button>
+        <button onclick="xoaHet()" style="margin-top: 5px; padding: 5px; width: 100%; cursor: pointer;">Xóa tất cả</button>
+
+        <div class="list-bpt" id="list-container">
+            </div>
+        
+        <div style="margin-top: 20px; font-size: 0.8rem; color: #555;">
+            * Lưu ý: Phần *KHÔNG* bị tô màu là miền nghiệm.<br>
+            * Dùng *\** cho phép nhân (ví dụ: $x^2$ là x*x).<br>
+            * Dùng *\*\ ** cho lũy thừa (ví dụ: $x^3$ là x**3).
+        </div>
+    </div>
+
+    <div class="panel-right">
+        <div>
+            <canvas id="canvas" width="600" height="600"></canvas>
+            <div class="legend-solution">MIỀN NGHIỆM LÀ VÙNG *KHÔNG* BỊ TÔ MÀU.</div>
+            <div id="mouse-coords" class="legend" style="color: blue; font-weight: bold;">x: 0, y: 0</div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    
+    // Mảng màu cho vùng loại bỏ (Unfeasible Region)
+    const VIOLATION_COLORS = [
+        [255, 0, 0, 100],      // Đỏ (semi-transparent)
+        [0, 0, 255, 100],      // Xanh dương
+        [255, 165, 0, 100],    // Cam
+        [128, 0, 128, 100],    // Tím
+        [0, 128, 0, 100],      // Xanh lá đậm
+        [255, 192, 203, 100]   // Hồng
+    ];
+
+    // Cấu hình hiển thị
+    const SCALE = 30; 
+    const OX = w / 2; 
+    const OY = h / 2; 
+
+    let heBPT = []; 
+
+    // === HÀM XỬ LÝ GIAO DIỆN & DATA ===
+
+    function themBPT() {
+        const expression = document.getElementById('expression').value.trim();
+        if (!expression.includes('<') && !expression.includes('>')) {
+            alert("Vui lòng nhập đầy đủ dấu bất phương trình: <=, >=, <, hoặc >.");
+            return;
+        }
+        
+        const colorIndex = heBPT.length % VIOLATION_COLORS.length;
+        const color = VIOLATION_COLORS[colorIndex];
+        const hexColor = rgb(${color[0]}, ${color[1]}, ${color[2]});
+
+        heBPT.push({ expression, color: hexColor });
+        renderList();
+        veDoThi(); 
+        document.getElementById('expression').value = ''; 
+    }
+
+    function xoaBPT(index) {
+        heBPT.splice(index, 1);
+        renderList();
+        veDoThi();
+    }
+
+    function xoaHet() {
+        heBPT = [];
+        renderList();
+        veDoThi();
+    }
+
+    function renderList() {
+        const container = document.getElementById('list-container');
+        container.innerHTML = '';
+        heBPT.forEach((item, index) => {
+            const div = document.createElement('div');
+            div.className = 'bpt-item';
+            div.style.setProperty('--bpt-color', item.color); 
+            
+            const label = (BPT ${index+1}): ;
+            const text = item.expression.replace('<', '&lt;').replace('>', '&gt;');
+            
+            div.innerHTML = <span><b>${label}</b> ${text}</span> <button class="btn-del" onclick="xoaBPT(${index})">X</button>;
+            container.appendChild(div);
+        });
+    }
+
+    // === HÀM KIỂM TRA ĐIỀU KIỆN (CORE LOGIC MỚI) ===
+
+    function kiemTraThoaMan(expr, x, y) {
+        let sign = '';
+        let parts;
+        
+        if (expr.includes('<=')) { sign = '<='; parts = expr.split('<='); }
+        else if (expr.includes('>=')) { sign = '>='; parts = expr.split('>='); }
+        else if (expr.includes('<')) { sign = '<'; parts = expr.split('<'); }
+        else if (expr.includes('>')) { sign = '>'; parts = expr.split('>'); }
+        else return false;
+
+        const leftExpr = parts[0].trim();
+        const rightExpr = parts[1].trim();
+        
+        const evaluate = (expression) => {
+            const code = expression
+                .replace(/x/g, (${x}))
+                .replace(/y/g, (${y}));
+            try {
+                return eval(code);
+            } catch (e) {
+                return NaN;
+            }
+        };
+
+        const leftVal = evaluate(leftExpr);
+        const rightVal = evaluate(rightExpr);
+        
+        if (isNaN(leftVal) || isNaN(rightVal)) return true;
+
+        switch (sign) {
+            case '<=': return leftVal <= rightVal;
+            case '>=': return leftVal >= rightVal;
+            case '<': return leftVal < rightVal;
+            case '>': return leftVal > rightVal;
+            default: return false;
+        }
+    }
+
+
+    // === HÀM VẼ TOÁN HỌC (CORE) ===
+
+    function toMath(px, py) {
+        return { x: (px - OX) / SCALE, y: (OY - py) / SCALE };
+    }
+
+    function veDoThi() {
+        ctx.clearRect(0, 0, w, h);
+        veTruc();
+
+        if (heBPT.length > 0) {
+            const imgData = ctx.createImageData(w, h);
+            const data = imgData.data;
+
+            for (let py = 0; py < h; py++) {
+                for (let px = 0; px < w; px++) {
+                    const idx = (py * w + px) * 4;
+                    data[idx] = 255; data[idx+1] = 255; data[idx+2] = 255; data[idx+3] = 255; 
+
+                    const mx = (px - OX) / SCALE;
+                    const my = (OY - py) / SCALE;
+
+                    let violatedIndex = -1; 
+                    
+                    for (let i = 0; i < heBPT.length; i++) {
+                        const item = heBPT[i];
+                        const isSatisfied = kiemTraThoaMan(item.expression, mx, my);
+
+                        if (!isSatisfied) { 
+                            violatedIndex = i;
+                            break; 
+                        }
+                    }
+
+                    if (violatedIndex !== -1) {
+                        const color = VIOLATION_COLORS[violatedIndex % VIOLATION_COLORS.length];
+                        data[idx] = color[0]; 
+                        data[idx+1] = color[1]; 
+                        data[idx+2] = color[2]; 
+                        data[idx+3] = color[3]; 
+                    }
+                }
+            }
+            ctx.putImageData(imgData, 0, 0);
+        }
+
+        veTruc();
+        
+        // VẼ ĐƯỜNG BIÊN: Dùng kỹ thuật kiểm tra đổi dấu để vẽ đường cong
+        heBPT.forEach((item, index) => {
+            veDuongBien(item.expression, index);
+        });
+    }
+
+    function veDuongBien(expression, index) {
+        const color = VIOLATION_COLORS[index % VIOLATION_COLORS.length];
+        const colorData = [color[0], color[1], color[2], 255]; 
+        
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+
+        for (let py = 0; py < h; py++) {
+            for (let px = 0; px < w; px++) {
+                const mx = (px - OX) / SCALE;
+                const my = (OY - py) / SCALE;
+
+                const epsilon = 0.05; 
+                
+                const isSatisfied_center = kiemTraThoaMan(expression, mx, my);
+                
+                // Kiểm tra 4 điểm lân cận để xác định đường biên
+                const isSatisfied_right = kiemTraThoaMan(expression, mx + epsilon, my);
+                const isSatisfied_up = kiemTraThoaMan(expression, mx, my + epsilon);
+                
+                // Nếu giá trị đổi dấu (center thỏa mãn và neighbor không hoặc ngược lại) -> Điểm nằm trên biên
+                if (isSatisfied_center !== isSatisfied_right || isSatisfied_center !== isSatisfied_up) {
+                    const idx = (py * w + px) * 4;
+                    // Chỉ vẽ nếu chưa bị vẽ bởi trục
+                    if(data[idx] !== 51 || data[idx+1] !== 51 || data[idx+2] !== 51) { 
+                        data[idx] = colorData[0]; 
+                        data[idx+1] = colorData[1]; 
+                        data[idx+2] = colorData[2]; 
+                        data[idx+3] = colorData[3]; 
+                    }
+                }
+            }
+        }
+        ctx.putImageData(imgData, 0, 0);
+    }
+    
+    // Các hàm toScreen, veTruc và tọa độ chuột giữ nguyên
+    function veTruc() {
+        ctx.strokeStyle = '#e1e1e1';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for(let i=0; i<=w; i+=SCALE) { ctx.moveTo(i,0); ctx.lineTo(i,h); }
+        for(let i=0; i<=h; i+=SCALE) { ctx.moveTo(0,i); ctx.lineTo(w,i); }
+        ctx.stroke();
+
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(OX, 0); ctx.lineTo(OX, h); 
+        ctx.moveTo(0, OY); ctx.lineTo(w, OY); 
+        ctx.stroke();
+    }
+
+    function toScreen(x, y) {
+        return { px: OX + x * SCALE, py: OY - y * SCALE };
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const math = toMath(x, y);
+        document.getElementById('mouse-coords').innerText = x: ${math.x.toFixed(2)}, y: ${math.y.toFixed(2)};
+    });
+
+    veDoThi();
+</script>
+
+</body>
+</html>
